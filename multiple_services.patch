@@ -1,0 +1,175 @@
+From 9aaf23d221e5906ab9aca6cee53a51a01ececb45 Mon Sep 17 00:00:00 2001
+From: Evgenii Grekov <jgrekov@gmail.com>
+Date: Wed, 20 Nov 2019 17:10:34 +0500
+Subject: [PATCH 1/2] BLE: reception support multiple service data
+
+---
+ libraries/BLE/src/BLEAdvertisedDevice.cpp | 51 +++++++++++++++++++----
+ libraries/BLE/src/BLEAdvertisedDevice.h   |  8 +++-
+ 2 files changed, 50 insertions(+), 9 deletions(-)
+
+diff --git a/libraries/BLE/src/BLEAdvertisedDevice.cpp b/libraries/BLE/src/BLEAdvertisedDevice.cpp
+index 1c341cf24..a70987e5d 100644
+--- a/libraries/BLE/src/BLEAdvertisedDevice.cpp
++++ b/libraries/BLE/src/BLEAdvertisedDevice.cpp
+@@ -25,7 +25,8 @@ BLEAdvertisedDevice::BLEAdvertisedDevice() {
+ 	m_manufacturerData = "";
+ 	m_name             = "";
+ 	m_rssi             = -9999;
+-	m_serviceData      = "";
++	m_serviceData      = {};
++	m_serviceDataUUIDs = {};
+ 	m_txPower          = 0;
+ 	m_pScan            = nullptr;
+ 
+@@ -101,33 +102,66 @@ BLEScan* BLEAdvertisedDevice::getScan() {
+ 	return m_pScan;
+ } // getScan
+ 
++/**
++ * @brief Get the number of service data.
++ * @return Number of service data discovered.
++ */
++int BLEAdvertisedDevice::getServiceDataCount() {
++	if (m_haveServiceData)
++		return m_serviceData.size();
++	else
++		return 0;
++
++} //getServiceDataCount
+ 
+ /**
+  * @brief Get the service data.
+  * @return The ServiceData of the advertised device.
+  */
+ std::string BLEAdvertisedDevice::getServiceData() {
+-	return m_serviceData;
++	return m_serviceData[0];
+ } //getServiceData
+ 
++/**
++ * @brief Get the service data.
++ * @return The ServiceData of the advertised device.
++ */
++std::string BLEAdvertisedDevice::getServiceData(int i) {
++	return m_serviceData[i];
++} //getServiceData
+ 
+ /**
+  * @brief Get the service data UUID.
+  * @return The service data UUID.
+  */
+ BLEUUID BLEAdvertisedDevice::getServiceDataUUID() {
+-	return m_serviceDataUUID;
++	return m_serviceDataUUIDs[0];
+ } // getServiceDataUUID
+ 
++/**
++ * @brief Get the service data UUID.
++ * @return The service data UUID.
++ */
++BLEUUID BLEAdvertisedDevice::getServiceDataUUID(int i) {
++	return m_serviceDataUUIDs[i];
++} // getServiceDataUUID
+ 
+ /**
+  * @brief Get the Service UUID.
+  * @return The Service UUID of the advertised device.
+  */
+-BLEUUID BLEAdvertisedDevice::getServiceUUID() {  //TODO Remove it eventually, is no longer useful
++BLEUUID BLEAdvertisedDevice::getServiceUUID() {
+ 	return m_serviceUUIDs[0];
+ } // getServiceUUID
+ 
++/**
++ * @brief Get the Service UUID.
++ * @return The Service UUID of the advertised device.
++ */
++BLEUUID BLEAdvertisedDevice::getServiceUUID(int i) {
++	return m_serviceUUIDs[i];
++} // getServiceUUID
++
+ /**
+  * @brief Check advertised serviced for existence required UUID
+  * @return Return true if service is advertised
+@@ -454,7 +488,7 @@ void BLEAdvertisedDevice::setServiceUUID(BLEUUID serviceUUID) {
+  */
+ void BLEAdvertisedDevice::setServiceData(std::string serviceData) {
+ 	m_haveServiceData = true;         // Set the flag that indicates we have service data.
+-	m_serviceData     = serviceData;  // Save the service data that we received.
++	m_serviceData.push_back(serviceData); // Save the service data that we received.
+ } //setServiceData
+ 
+ 
+@@ -464,7 +498,8 @@ void BLEAdvertisedDevice::setServiceData(std::string serviceData) {
+  */
+ void BLEAdvertisedDevice::setServiceDataUUID(BLEUUID uuid) {
+ 	m_haveServiceData = true;         // Set the flag that indicates we have service data.
+-	m_serviceDataUUID = uuid;
++	m_serviceDataUUIDs.push_back(uuid);
++	log_d("- addServiceDataUUID(): serviceDataUUID: %s", uuid.toString().c_str());
+ } // setServiceDataUUID
+ 
+ 
+@@ -498,7 +533,9 @@ std::string BLEAdvertisedDevice::toString() {
+ 		free(pHex);
+ 	}
+ 	if (haveServiceUUID()) {
+-		res += ", serviceUUID: " + getServiceUUID().toString();
++		for (int i; i < m_serviceUUIDs.size(); i++) {
++		    res += ", serviceUUID: " + getServiceUUID(i).toString();
++		}
+ 	}
+ 	if (haveTXPower()) {
+ 		char val[4];
+diff --git a/libraries/BLE/src/BLEAdvertisedDevice.h b/libraries/BLE/src/BLEAdvertisedDevice.h
+index aec83746e..a3181c10b 100644
+--- a/libraries/BLE/src/BLEAdvertisedDevice.h
++++ b/libraries/BLE/src/BLEAdvertisedDevice.h
+@@ -36,8 +36,12 @@ class BLEAdvertisedDevice {
+ 	int         getRSSI();
+ 	BLEScan*    getScan();
+ 	std::string getServiceData();
++	std::string getServiceData(int i);
+ 	BLEUUID     getServiceDataUUID();
++	BLEUUID     getServiceDataUUID(int i);
+ 	BLEUUID     getServiceUUID();
++	BLEUUID     getServiceUUID(int i);
++	int         getServiceDataCount();
+ 	int8_t      getTXPower();
+ 	uint8_t* 	getPayload();
+ 	size_t		getPayloadLength();
+@@ -93,8 +97,8 @@ class BLEAdvertisedDevice {
+ 	int         m_rssi;
+ 	std::vector<BLEUUID> m_serviceUUIDs;
+ 	int8_t      m_txPower;
+-	std::string m_serviceData;
+-	BLEUUID     m_serviceDataUUID;
++	std::vector<std::string> m_serviceData;
++	std::vector<BLEUUID> m_serviceDataUUIDs;
+ 	uint8_t*	m_payload;
+ 	size_t		m_payloadLength = 0;
+ 	esp_ble_addr_type_t m_addressType;
+
+From 0fafb37d55eaf2241856ab9344168b5bf319f34c Mon Sep 17 00:00:00 2001
+From: Evgenii Grekov <jgrekov@gmail.com>
+Date: Mon, 16 Dec 2019 11:33:33 +0500
+Subject: [PATCH 2/2] fix prev commit, i not inicialized
+
+---
+ libraries/BLE/src/BLEAdvertisedDevice.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/libraries/BLE/src/BLEAdvertisedDevice.cpp b/libraries/BLE/src/BLEAdvertisedDevice.cpp
+index a70987e5d..f27ba6f6c 100644
+--- a/libraries/BLE/src/BLEAdvertisedDevice.cpp
++++ b/libraries/BLE/src/BLEAdvertisedDevice.cpp
+@@ -533,7 +533,7 @@ std::string BLEAdvertisedDevice::toString() {
+ 		free(pHex);
+ 	}
+ 	if (haveServiceUUID()) {
+-		for (int i; i < m_serviceUUIDs.size(); i++) {
++		for (int i=0; i < m_serviceUUIDs.size(); i++) {
+ 		    res += ", serviceUUID: " + getServiceUUID(i).toString();
+ 		}
+ 	}
