@@ -4,9 +4,11 @@
 #include "BleAdvListener.h"
 #include <BLEAddress.h>
 #include <BLEScan.h>
+#include "SensorCommon.h"
 #include <forward_list>
 
 /* ************************************************************************** */
+
 /**
  * @brief Class with data from one LYWSDCGQ sensor
  */
@@ -17,13 +19,15 @@ private:
 
 	const char  *alias;
 
-	time_t        timestamp = 0;
+	struct       SensorValues values;
+	time_t       advTimestamp = 0;
+	time_t       cbkWaitTime = 10;
 
-	float        temp = -100.0;
+	time_t       nextTempNotify = 0;
+	time_t       nextHumidityNotify = 0;
+	time_t       nextBatNotify = 0;
 
-	float        hum  = -1.0;
-
-	float        bat  = -1.0;
+	std::forward_list<SensorDataChangeCbk *> *regCbks = nullptr; // list with registered callbacks
 
 public:
 
@@ -31,6 +35,8 @@ public:
 	{
 		this->address = address;
 		this->alias = alias;
+
+		memset( &values, 0, sizeof( struct SensorValues ) );
 	}
 
 	/**
@@ -51,6 +57,14 @@ class LYWSDCGQ
 {
 public:
 	/**
+	 * @brief Initialise class.
+	 * This method must be called once before any other calls (in setup() funcion)
+	 *
+	 * @param[in] cbkWaitTime Minimum time in seconds between two callback calls for the same sensor value update
+	 */
+	void init( time_t cbkWaitTime = 10 );
+
+	/**
 	 * @brief Registers new LYWSDCGQ devices MAC address that we want to get data from
 	 * @param[in] address MAC address of device
 	 * @param[in] alias Our device alias
@@ -58,30 +72,34 @@ public:
 	void deviceRegister( BLEAddress *address, const char *alias = nullptr );
 
 	/**
-	 * @brief Gets device data by MAC address
-	 * @param[in] address Address of device we are interested in
-	 * @param[out] timestamp How many seconds ago was data refreshed
-	 * @param[out] temp Last temperature received
-	 * @param[out] hum Last humidity received
-	 * @param[out] bat Remaining battery capacity in %
-	 * @return Returns true if device with entered MAC was found (registered)
-	 */
-	bool getData( BLEAddress &address, time_t *timestamp, float *temp = nullptr, float *hum = nullptr, float *bat = nullptr );
-
-	/**
 	 * @brief Gets device data by alias
-	 * @param[in] address Address of device we are interested in
-	 * @param[out] timestamp How many seconds ago was data refreshed
-	 * @param[out] temp Last temperature received
-	 * @param[out] hum Last humidity received
-	 * @param[out] bat Remaining battery capacity in %
+	 * @param[in] alias Alias of device we are interested in
+	 * @param[out] values Values for sensor with given alias
 	 * @return Returns true if device with entered alias was found (registered)
 	 */
-	bool getData( const char *room, time_t *timestamp, float *temp = nullptr, float *hum = nullptr, float *bat = nullptr );
+	bool getData( const char *alias, struct SensorValues *values );
+
+	/**
+	 * @brief Gets device data by MAC address
+	 * @param[in] address Address of device we are interested in
+	 * @param[out] values Values for sensor with given address
+	 * @return Returns true if device with entered MAC was found (registered)
+	 */
+	bool getData( BLEAddress &address, struct SensorValues *values );
+
+	/**
+	 * @brief Registers new callback called on data refresh
+	 * @param[in] cbk Pointer to callback class
+	 */
+	void cbkRegister( SensorDataChangeCbk *cbk );
+
 private:
+
+	time_t        cbkWaitTime = 10;
 
 	std::forward_list<LYWSDCGQData *> regDevices; // list of registered devices
 
+	std::forward_list<SensorDataChangeCbk *> regCbks; // list with registered callbacks
 };
 
 /* ************************************************************************** */

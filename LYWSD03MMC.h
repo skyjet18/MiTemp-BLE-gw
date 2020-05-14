@@ -3,6 +3,7 @@
 #include "Arduino.h"
 #include <BLEDevice.h>
 #include "BleAdvListener.h"
+#include "SensorCommon.h"
 #include <forward_list>
 
 /* ************************************************************************** */
@@ -19,15 +20,15 @@ private:
 	const uint8_t *key;
 
 	time_t       advTimestamp = -1; // timestamp of last ADV packet received
-
 	time_t       nextRefresh = 0;   // next planed data refresh
+	time_t       cbkWaitTime = 0;
+	time_t       nextTempNotify = 0;
+	time_t       nextHumidityNotify = 0;
+	time_t       nextBatNotify = 0;
 
-	time_t       timestamp  = 0;
-	float       temp       = -100.0;
-	float       voltage    = -1.0;
-	float       humidity   = -1.0;
-	float       bat        = -1.0;
+	struct SensorValues values;
 
+	std::forward_list<SensorDataChangeCbk *> *regCbks = nullptr; // list with registered callbacks
 public:
 
 	LYWSD03MMCData( BLEAddress *address, const char *alias = nullptr, const uint8_t *key = nullptr )
@@ -35,6 +36,8 @@ public:
 		this->address = address;
 		this->alias = alias;
 		this->key = key;
+
+		memset( &values, 0, sizeof( struct SensorValues ) );
 	}
 
 	/**
@@ -71,16 +74,18 @@ public:
 	 *
 	 * @param[in] client Bluetooth client class
 	 * @param[in] refreshTime Time in seconds in which data will be automaticaly refreshed (0 = no automatic refresh)
+	 * @param[in] cbkWaitTime Minimum time in seconds between two callback calls for the same sensor value update
 	 */
-	void init( BLEClient *client, time_t refreshTime = 300 );
+	void init( BLEClient *client, time_t refreshTime = 300, time_t cbkWaitTime = 10 );
 
 	/**
 	 * @brief Initialise class. Call it if you don't have initialised bluetooth client. Method will initialise one client for you.
 	 * This method must be called once before any other calls (in setup() funcion)
 	 *
 	 * @param[in] refreshTime Time in seconds in which data will be automaticaly refreshed (0 = no automatic refresh)
+	 * @param[in] cbkWaitTime Minimum time in seconds between two callback calls for the same sensor value update
 	 */
-	void init( time_t refreshTime = 300 );
+	void init( time_t refreshTime = 300, time_t cbkWaitTime = 10 );
 
 	/**
 	 * @brief Method to handle everything needed - should be called in every loop() iteration
@@ -110,26 +115,24 @@ public:
 	/**
 	 * @brief Gets device data by alias
 	 * @param[in] alias Alias of device we are interested in
-	 * @param[out] timestamp How many seconds ago was data refreshed
-	 * @param[out] temp Last temperature received
-	 * @param[out] hum Last humidity received
-	 * @param[out] bat Remaining battery capacity in %
-	 * @param[out] voltage Last battery voltage received
+	 * @param[out] values Values for sensor with given alias
 	 * @return Returns true if device with entered alias was found (registered)
 	 */
-	bool getData( const char *alias, time_t *timestamp, float *temp = nullptr, float *hum = nullptr, float *bat = nullptr, float *voltage = nullptr );
+	bool getData( const char *alias, struct SensorValues *values );
 
 	/**
 	 * @brief Gets device data by MAC address
 	 * @param[in] address Address of device we are interested in
-	 * @param[out] timestamp How many seconds ago was data refreshed
-	 * @param[out] temp Last temperature received
-	 * @param[out] hum Last humidity received
-	 * @param[out] bat Remaining battery capacity in %
-	 * @param[out] voltage Last battery voltage received
+	 * @param[out] values Values for sensor with given address
 	 * @return Returns true if device with entered MAC was found (registered)
 	 */
-	bool getData( BLEAddress &address, time_t *timestamp, float *temp = nullptr, float *hum = nullptr, float *bat = nullptr, float *voltage = nullptr );
+	bool getData( BLEAddress &address, struct SensorValues *values );
+
+	/**
+	 * @brief Registers new callback called on data refresh
+	 * @param[in] cbk Pointer to callback class
+	 */
+	void cbkRegister( SensorDataChangeCbk *cbk );
 
 
 private:
@@ -144,6 +147,8 @@ private:
 
 	std::forward_list<LYWSD03MMCData *> regDevices; // list with registered devices
 
+	std::forward_list<SensorDataChangeCbk *> regCbks; // list with registered callbacks
+
 	// actual device we are working with (due to library limitation we can be connected only to one device at a time)
 	LYWSD03MMCData *actDevice = nullptr;
 
@@ -151,6 +156,7 @@ private:
 	time_t connTimeout = 15;
 	time_t maxAdvTimeout = 30;
 	time_t refreshTime;
+	time_t cbkWaitTime;
 
 	/**
 	 * @brief Callback called when notification from sensor is received

@@ -32,6 +32,8 @@ void LYWSDCGQData::onAdvData( BLEAddress *address, std::string &serviceData )
 
 	size_t sdLength;
 
+	advTimestamp = time( NULL );
+
 	if( (sdLength = serviceData.length()) > 11 )
 	{
 		serviceData.copy( (char*) tempData, sdLength - 11, 11 );
@@ -44,36 +46,97 @@ void LYWSDCGQData::onAdvData( BLEAddress *address, std::string &serviceData )
 		return;
 	}
 
+	bool tempNew = false;
+	bool humidityNew = false;
+	bool batNew = false;
+
 	switch( tempData[0] )
 	{
 		case 0x04:
 		{
-			temp = ((tempData[4] << 8) | tempData[3]) / 10.0;
-			timestamp = time( NULL );
+			if( advTimestamp > nextTempNotify )
+			{
+				tempNew = true;
+				nextTempNotify = advTimestamp + cbkWaitTime;
+			}
+
+			values.temp = ((tempData[4] << 8) | tempData[3]) / 10.0;
+			values.tempTimestamp = advTimestamp;
 		}
 		break;
 
 		case 0x06:
 		{
-			hum = ((tempData[4] << 8) | tempData[3]) / 10.0;
-			timestamp = time( NULL );
+			if( advTimestamp > nextHumidityNotify )
+			{
+				humidityNew = true;
+				nextHumidityNotify = advTimestamp + cbkWaitTime;
+			}
+
+			values.humidity = ((tempData[4] << 8) | tempData[3]) / 10.0;
+			values.humidityTimestamp = advTimestamp;
 		}
 		break;
 
 		case 0x0A:
 		{
-			bat = (float) tempData[3];
+			if( advTimestamp > nextBatNotify )
+			{
+				batNew = true;
+				nextBatNotify = advTimestamp + cbkWaitTime;
+			}
+
+			values.bat = (float) tempData[3];
+			values.batTimestamp = advTimestamp;
+
+			// emulate voltage -> 3.1V = 100%, 2.1V = 0%
+			values.voltage = 2.1 + (values.bat / 100.0);
+
 		}
 		break;
 
 		case 0x0D:
 		{
-			temp = ((tempData[4] << 8) | tempData[3]) / 10.0;
-			hum = ((tempData[6] << 8) | tempData[5]) / 10.0;
-			timestamp = time( NULL );
+			if( advTimestamp > nextTempNotify )
+			{
+				tempNew = true;
+				nextTempNotify = advTimestamp + cbkWaitTime;
+			}
+
+			if( advTimestamp > nextHumidityNotify )
+			{
+				humidityNew = true;
+				nextHumidityNotify = advTimestamp + cbkWaitTime;
+			}
+
+			values.temp = ((tempData[4] << 8) | tempData[3]) / 10.0;
+			values.humidity = ((tempData[6] << 8) | tempData[5]) / 10.0;
+
+			values.humidityTimestamp = advTimestamp;
+			values.tempTimestamp = advTimestamp;
 		}
 		break;
 	}
+
+	if( tempNew || humidityNew || batNew )
+	{
+		for( auto it = regCbks->cbegin(); it != regCbks->cend(); it++ )
+		{
+			(*it)->onData( address, alias, tempNew, humidityNew, batNew );
+		}
+	}
+}
+
+/* ************************************************************************** */
+/**
+ * @brief Initialise class.
+ * This method must be called once before any other calls (in setup() funcion)
+ *
+ * @param[in] cbkWaitTime Minimum time in seconds between two callback calls for the same sensor value update
+ */
+void LYWSDCGQ::init( time_t cbkWaitTime )
+{
+	this->cbkWaitTime = cbkWaitTime;
 }
 
 /* ************************************************************************** */
@@ -86,6 +149,9 @@ void LYWSDCGQ::deviceRegister( BLEAddress *address, const char *alias )
 {
 	LYWSDCGQData *data = new LYWSDCGQData( address, alias );
 
+	data->cbkWaitTime = cbkWaitTime;
+	data->regCbks = &regCbks;
+
 	bleAdvListener.cbkRegister( data );
 	regDevices.push_front( data );
 }
@@ -93,38 +159,17 @@ void LYWSDCGQ::deviceRegister( BLEAddress *address, const char *alias )
 /* ************************************************************************** */
 /**
  * @brief Gets device data by alias
- * @param[in] address Address of device we are interested in
- * @param[out] timestamp How many seconds ago was data refreshed
- * @param[out] temp Last temperature received
- * @param[out] hum Last humidity received
- * @param[out] bat Remaining battery capacity in %
+ * @param[in] alias Alias of device we are interested in
+ * @param[out] values Values for sensor with given alias
  * @return Returns true if device with entered alias was found (registered)
  */
-bool LYWSDCGQ::getData( const char *alias, time_t *timestamp, float *temp, float *hum, float *bat )
+bool LYWSDCGQ::getData( const char *alias, struct SensorValues *values )
 {
 	for( auto it = regDevices.cbegin(); it != regDevices.cend(); it++ )
 	{
 		if( (*it)->alias && strcmp( (*it)->alias, alias ) == 0 )
 		{
-			if( timestamp )
-			{
-				*timestamp = time( NULL ) - (*it)->timestamp;
-			}
-
-			if( temp )
-			{
-				*temp = (*it)->temp;
-			}
-
-			if( hum )
-			{
-				*hum = (*it)->hum;
-			}
-
-			if( bat )
-			{
-				*bat = (*it)->bat;
-			}
+			memcpy( values, &(*it)->values, sizeof( struct SensorValues ) );
 
 			return true;
 		}
@@ -135,45 +180,34 @@ bool LYWSDCGQ::getData( const char *alias, time_t *timestamp, float *temp, float
 
 /* ************************************************************************** */
 /**
- * @brief Gets device data by MAC address
+ * @brief Gets device data by address
  * @param[in] address Address of device we are interested in
- * @param[out] timestamp How many seconds ago was data refreshed
- * @param[out] temp Last temperature received
- * @param[out] hum Last humidity received
- * @param[out] bat Remaining battery capacity in %
- * @return Returns true if device with entered MAC was found (registered)
+ * @param[out] values Values for sensor with given address
+ * @return Returns true if device with entered alias was found (registered)
  */
-bool LYWSDCGQ::getData( BLEAddress &address, time_t *timestamp, float *temp, float *hum, float *bat )
+bool LYWSDCGQ::getData( BLEAddress &address, struct SensorValues *values )
 {
 	for( auto it = regDevices.cbegin(); it != regDevices.cend(); it++ )
 	{
 		if( (*it)->address->equals( address ) == true )
 		{
-			if( timestamp )
-			{
-				*timestamp = time( NULL ) - (*it)->timestamp;
-			}
-
-			if( temp )
-			{
-				*temp = (*it)->temp;
-			}
-
-			if( hum )
-			{
-				*hum = (*it)->hum;
-			}
-
-			if( bat )
-			{
-				*bat = (*it)->bat;
-			}
+			memcpy( values, &(*it)->values, sizeof( struct SensorValues ) );
 
 			return true;
 		}
 	}
 
 	return false;
+}
+
+/* ************************************************************************** */
+/**
+ * @brief Registers new callback called on data refresh
+ * @param[in] cbk Pointer to callback class
+ */
+void LYWSDCGQ::cbkRegister( SensorDataChangeCbk *cbk )
+{
+	regCbks.push_front( cbk );
 }
 
 /* ************************************************************************** */

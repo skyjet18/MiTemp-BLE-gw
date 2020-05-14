@@ -122,30 +122,61 @@ void LYWSD03MMCData::onAdvData( BLEAddress *address, std::string &serviceData )
 		return;
 	}
 
+	bool tempNew = false;
+	bool humidityNew = false;
+	bool batNew = false;
+
 	switch( tempData[0] )
 	{
 		case 0x04:
 		{
-			temp = ((tempData[4] << 8) | tempData[3]) / 10.0;
-			timestamp = time( NULL );
+			if( advTimestamp > nextTempNotify )
+			{
+				tempNew = true;
+				nextTempNotify = advTimestamp + cbkWaitTime;
+			}
+
+			values.temp = ((tempData[4] << 8) | tempData[3]) / 10.0;
+			values.tempTimestamp = advTimestamp;
 		}
 		break;
 
 		case 0x06:
 		{
-			humidity = ((tempData[4] << 8) | tempData[3]) / 10.0;
-			timestamp = time( NULL );
+			if( advTimestamp > nextHumidityNotify )
+			{
+				humidityNew = true;
+				nextHumidityNotify = advTimestamp + cbkWaitTime;
+			}
+
+			values.humidity = ((tempData[4] << 8) | tempData[3]) / 10.0;
+			values.humidityTimestamp = advTimestamp;
 		}
 		break;
 
 		case 0x0A:
 		{
-			bat = (float) tempData[3];
+			if( advTimestamp > nextBatNotify )
+			{
+				batNew = true;
+				nextBatNotify = advTimestamp + cbkWaitTime;
+			}
+
+			values.bat = (float) tempData[3];
 
 			// emulate voltage -> 3.1V = 100%, 2.1V = 0%
-			voltage = 2.1 + (bat / 100.0);
+			values.voltage = 2.1 + (values.bat / 100.0);
+			values.batTimestamp = advTimestamp;
 		}
 		break;
+	}
+
+	if( tempNew || humidityNew || batNew )
+	{
+		for( auto it = regCbks->cbegin(); it != regCbks->cend(); it++ )
+		{
+			(*it)->onData( address, alias, tempNew, humidityNew, batNew );
+		}
 	}
 }
 
@@ -155,13 +186,14 @@ void LYWSD03MMCData::onAdvData( BLEAddress *address, std::string &serviceData )
  * This method must be called once before any other calls (in setup() funcion)
  *
  * @param[in] refreshTime Time in seconds in which data will be automaticaly refreshed (0 = no automatic refresh)
+ * @param[in] cbkWaitTime Minimum time in seconds between two callback calls for the same sensor value update
  */
-void LYWSD03MMC::init( time_t refreshTime )
+void LYWSD03MMC::init( time_t refreshTime, time_t cbkWaitTime )
 {
 	BLEClient *pClient = BLEDevice::createClient();
 	pClient->setClientCallbacks( new DummyClientCallback() );
 
-	init( pClient, refreshTime );
+	init( pClient, refreshTime, cbkWaitTime );
 }
 
 /* ************************************************************************** */
@@ -171,11 +203,13 @@ void LYWSD03MMC::init( time_t refreshTime )
  *
  * @param[in] client Bluetooth client class
  * @param[in] refreshTime Time in seconds in which data will be automaticaly refreshed (0 = no automatic refresh)
+ * @param[in] cbkWaitTime Minimum time in seconds between two callback calls for the same sensor value update
  */
-void LYWSD03MMC::init( BLEClient *client, time_t refreshTime )
+void LYWSD03MMC::init( BLEClient *client, time_t refreshTime, time_t cbkWaitTime )
 {
 	bleClient = client;
 	this->refreshTime = refreshTime;
+	this->cbkWaitTime = cbkWaitTime;
 }
 
 /* ************************************************************************** */
@@ -192,22 +226,27 @@ void LYWSD03MMC::setData( float temp, float humidity, float voltage )
 		SERIAL_PRINTF("Received data for %s: temp = %.1f : humidity = %.0f : voltage = %f\n",
 				actDevice->alias, temp, humidity, voltage );
 
-		actDevice->timestamp = time( NULL );
-		actDevice->temp = temp;
-		actDevice->humidity = humidity;
-		actDevice->voltage = voltage;
+		actDevice->values.tempTimestamp = actDevice->values.humidityTimestamp = actDevice->values.batTimestamp= time( NULL );
+		actDevice->values.temp = temp;
+		actDevice->values.humidity = humidity;
+		actDevice->values.voltage = voltage;
 
 		// emulate battery percentage -> 3.1V = 100%, 2.1V = 0%
 		if( voltage > 3.1 )
 		{
 			voltage = 3.1;
 		}
-		actDevice->bat = 100.0 - ((3.1 - voltage) * 100.0);
+		actDevice->values.bat = 100.0 - ((3.1 - voltage) * 100.0);
 
-		if( actDevice->bat < 0.0 )
+		if( actDevice->values.bat < 0.0 )
 		{
-			actDevice->bat = 0.0;
+			actDevice->values.bat = 0.0;
 		}
+
+		for( auto it = regCbks.cbegin(); it != regCbks.cend(); it++ )
+    	{
+   			(*it)->onData( actDevice->address, actDevice->alias, true, true, true );
+    	}
 	}
 }
 
@@ -466,6 +505,8 @@ void LYWSD03MMC::deviceRegister( BLEAddress *address, const char *alias, const u
 		data->nextRefresh = 1 + std::distance( regDevices.cbegin(), regDevices.cend() ) * (connTimeout * 2);
 	}
 
+	data->cbkWaitTime = cbkWaitTime;
+	data->regCbks = &regCbks;
 	bleAdvListener.cbkRegister( data );
 
 	regDevices.push_front( data );
@@ -508,44 +549,17 @@ void LYWSD03MMC::forceRefresh( BLEAddress &address )
 /* ************************************************************************** */
 /**
  * @brief Gets device data by alias
- * @param[in] address Address of device we are interested in
- * @param[out] timestamp How many seconds ago was data refreshed
- * @param[out] temp Last temperature received
- * @param[out] hum Last humidity received
- * @param[out] bat Remaining battery capacity in %
- * @param[out] voltage Last battery voltage received
+ * @param[in] alias Alias of device we are interested in
+ * @param[out] values Values for sensor with given alias
  * @return Returns true if device with entered alias was found (registered)
  */
-bool LYWSD03MMC::getData( const char *alias, time_t *timestamp, float *temp, float *hum, float *bat, float *voltage )
+bool LYWSD03MMC::getData( const char *alias, struct SensorValues *values )
 {
 	for( auto it = regDevices.cbegin(); it != regDevices.cend(); it++ )
 	{
 		if( (*it)->alias && strcmp( (*it)->alias, alias ) == 0 )
 		{
-			if( timestamp )
-			{
-				*timestamp = time( NULL ) - (*it)->timestamp;
-			}
-
-			if( temp )
-			{
-				*temp = (*it)->temp;
-			}
-
-			if( hum )
-			{
-				*hum = (*it)->humidity;
-			}
-
-			if( bat )
-			{
-				*bat = (*it)->bat;
-			}
-
-			if( voltage )
-			{
-				*voltage = (*it)->voltage;
-			}
+			memcpy( values, &(*it)->values, sizeof( struct SensorValues ) );
 
 			return true;
 		}
@@ -556,51 +570,34 @@ bool LYWSD03MMC::getData( const char *alias, time_t *timestamp, float *temp, flo
 
 /* ************************************************************************** */
 /**
- * @brief Gets device data by MAC address
+ * @brief Gets device data by address
  * @param[in] address Address of device we are interested in
- * @param[out] timestamp How many seconds ago was data refreshed
- * @param[out] temp Last temperature received
- * @param[out] hum Last humidity received
- * @param[out] bat Remaining battery capacity in %
- * @param[out] voltage Last battery voltage received
- * @return Returns true if device with entered MAC was found (registered)
+ * @param[out] values Values for sensor with given address
+ * @return Returns true if device with entered alias was found (registered)
  */
-bool LYWSD03MMC::getData( BLEAddress &address, time_t *timestamp, float *temp, float *hum, float *bat, float *voltage )
+bool LYWSD03MMC::getData( BLEAddress &address, struct SensorValues *values )
 {
 	for( auto it = regDevices.cbegin(); it != regDevices.cend(); it++ )
 	{
 		if( (*it)->address->equals( address ) == true )
 		{
-			if( timestamp )
-			{
-				*timestamp = time( NULL ) - (*it)->timestamp;
-			}
-
-			if( temp )
-			{
-				*temp = (*it)->temp;
-			}
-
-			if( hum )
-			{
-				*hum = (*it)->humidity;
-			}
-
-			if( bat )
-			{
-				*bat = (*it)->bat;
-			}
-
-			if( voltage )
-			{
-				*voltage = (*it)->voltage;
-			}
+			memcpy( values, &(*it)->values, sizeof( struct SensorValues ) );
 
 			return true;
 		}
 	}
 
 	return false;
+}
+
+/* ************************************************************************** */
+/**
+ * @brief Registers new callback called on data refresh
+ * @param[in] cbk Pointer to callback class
+ */
+void LYWSD03MMC::cbkRegister( SensorDataChangeCbk *cbk )
+{
+	regCbks.push_front( cbk );
 }
 
 /* ************************************************************************** */
