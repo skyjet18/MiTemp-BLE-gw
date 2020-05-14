@@ -1,5 +1,6 @@
 #include "LYWSD03MMC.h"
 #include "debug.h"
+#include "mbedtls/ccm.h"
 
 /* ************************************************************************** */
 
@@ -31,6 +32,69 @@ class DummyClientCallback : public BLEClientCallbacks
 
 /* ************************************************************************** */
 /**
+ * @brief Decrypts encrypted ADV service data
+ * @param[in] serviceData Received encrypted service data
+ * @param[in] key Key to decrypt data
+ * @param[out] decryptedData Decrypted data (if success)
+ * @return Returns true on success or false on failure
+ */
+bool LYWSD03MMCData::decryptServiceData( std::string &serviceData, const uint8_t *key, uint8_t decryptedData[16] )
+{
+	const uint8_t *v = (const uint8_t *) serviceData.c_str();
+
+	if( key == nullptr )
+	{
+		return false;
+	}
+
+	if( serviceData.length() < 22 && serviceData.length() > 23 )
+	{
+		SERIAL_PRINTF("Payload size %ld is not supported for decryption\n", serviceData.length() );
+		return false;
+	}
+	else if( !(v[0] & 0x08) )
+	{
+		SERIAL_PRINTF("Payload of size %ld is not encrypted\n", serviceData.length() );
+		return false;
+	}
+
+	const unsigned char authData = 0x11;
+	int     offset = 0;
+	size_t  datasize = 4;
+	uint8_t iv[16];
+
+	if( serviceData.length() == 23 )
+	{
+		datasize = 5;  // temperature or humidity
+		offset = 1;
+	}
+
+	memcpy( iv, v + 5, 6);                // MAC address reversed
+	memcpy( iv + 6, v + 2, 3);            // sensor type (2) + packet id (1)
+	memcpy( iv + 9, v + 15 + offset, 3);  // payload counter
+
+	mbedtls_ccm_context ctx;
+	mbedtls_ccm_init(&ctx);
+
+	if( mbedtls_ccm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, key, 16 * 8 ) != 0 )
+	{
+		mbedtls_ccm_free(&ctx);
+		return false;
+	}
+
+	if( mbedtls_ccm_auth_decrypt( &ctx, datasize, iv, 12, &authData, 1,
+								 v + 11, decryptedData, v + 18 + offset, 4 ) != 0 )
+	{
+		mbedtls_ccm_free(&ctx);
+		return false;
+	}
+
+	mbedtls_ccm_free(&ctx);
+	return true;
+}
+
+/* ************************************************************************** */
+/**
  * @brief Method called when ADV packet is received
  * @param[in] address Address of advertised device
  * @param[in] serviceData Service data from ADV packet
@@ -43,6 +107,46 @@ void LYWSD03MMCData::onAdvData( BLEAddress *address, std::string &serviceData )
 	}
 
 	advTimestamp = time( NULL );
+
+	/* check for encrypted data prefix */
+	if( serviceData.c_str()[0] != 0x58 )
+	{
+		return;
+	}
+
+	uint8_t tempData[16];
+
+	if( decryptServiceData( serviceData, this->key, tempData ) == false )
+	{
+		SERIAL_PRINTF("Failed to decrypt service data from device %s\n", address->toString().c_str() );
+		return;
+	}
+
+	switch( tempData[0] )
+	{
+		case 0x04:
+		{
+			temp = ((tempData[4] << 8) | tempData[3]) / 10.0;
+			timestamp = time( NULL );
+		}
+		break;
+
+		case 0x06:
+		{
+			humidity = ((tempData[4] << 8) | tempData[3]) / 10.0;
+			timestamp = time( NULL );
+		}
+		break;
+
+		case 0x0A:
+		{
+			bat = (float) tempData[3];
+
+			// emulate voltage -> 3.1V = 100%, 2.1V = 0%
+			voltage = 2.1 + (bat / 100.0);
+		}
+		break;
+	}
 }
 
 /* ************************************************************************** */
@@ -92,6 +196,18 @@ void LYWSD03MMC::setData( float temp, float humidity, float voltage )
 		actDevice->temp = temp;
 		actDevice->humidity = humidity;
 		actDevice->voltage = voltage;
+
+		// emulate battery percentage -> 3.1V = 100%, 2.1V = 0%
+		if( voltage > 3.1 )
+		{
+			voltage = 3.1;
+		}
+		actDevice->bat = 100.0 - ((3.1 - voltage) * 100.0);
+
+		if( actDevice->bat < 0.0 )
+		{
+			actDevice->bat = 0.0;
+		}
 	}
 }
 
@@ -339,10 +455,11 @@ void LYWSD03MMC::process()
  * @brief Registers new LYWSD03MMC devices MAC address that we want to get data from
  * @param[in] address MAC address of device
  * @param[in] alias Our device alias
+ * @param[in] key Key for decrypting ADV packets in passive mode
  */
-void LYWSD03MMC::deviceRegister( BLEAddress *address, const char *alias )
+void LYWSD03MMC::deviceRegister( BLEAddress *address, const char *alias, const uint8_t *key )
 {
-	LYWSD03MMCData *data = new LYWSD03MMCData( address, alias );
+	LYWSD03MMCData *data = new LYWSD03MMCData( address, alias, key );
 
 	if( refreshTime )
 	{
@@ -395,10 +512,11 @@ void LYWSD03MMC::forceRefresh( BLEAddress &address )
  * @param[out] timestamp How many seconds ago was data refreshed
  * @param[out] temp Last temperature received
  * @param[out] hum Last humidity received
+ * @param[out] bat Remaining battery capacity in %
  * @param[out] voltage Last battery voltage received
  * @return Returns true if device with entered alias was found (registered)
  */
-bool LYWSD03MMC::getData( const char *alias, time_t *timestamp, float *temp, float *hum, float *voltage )
+bool LYWSD03MMC::getData( const char *alias, time_t *timestamp, float *temp, float *hum, float *bat, float *voltage )
 {
 	for( auto it = regDevices.cbegin(); it != regDevices.cend(); it++ )
 	{
@@ -417,6 +535,11 @@ bool LYWSD03MMC::getData( const char *alias, time_t *timestamp, float *temp, flo
 			if( hum )
 			{
 				*hum = (*it)->humidity;
+			}
+
+			if( bat )
+			{
+				*bat = (*it)->bat;
 			}
 
 			if( voltage )
@@ -438,10 +561,11 @@ bool LYWSD03MMC::getData( const char *alias, time_t *timestamp, float *temp, flo
  * @param[out] timestamp How many seconds ago was data refreshed
  * @param[out] temp Last temperature received
  * @param[out] hum Last humidity received
+ * @param[out] bat Remaining battery capacity in %
  * @param[out] voltage Last battery voltage received
  * @return Returns true if device with entered MAC was found (registered)
  */
-bool LYWSD03MMC::getData( BLEAddress &address, time_t *timestamp, float *temp, float *hum, float *voltage )
+bool LYWSD03MMC::getData( BLEAddress &address, time_t *timestamp, float *temp, float *hum, float *bat, float *voltage )
 {
 	for( auto it = regDevices.cbegin(); it != regDevices.cend(); it++ )
 	{
@@ -460,6 +584,11 @@ bool LYWSD03MMC::getData( BLEAddress &address, time_t *timestamp, float *temp, f
 			if( hum )
 			{
 				*hum = (*it)->humidity;
+			}
+
+			if( bat )
+			{
+				*bat = (*it)->bat;
 			}
 
 			if( voltage )

@@ -16,6 +16,8 @@ private:
 
 	const char *alias;
 
+	const uint8_t *key;
+
 	time_t       advTimestamp = -1; // timestamp of last ADV packet received
 
 	time_t       nextRefresh = 0;   // next planed data refresh
@@ -24,13 +26,15 @@ private:
 	float       temp       = -100.0;
 	float       voltage    = -1.0;
 	float       humidity   = -1.0;
+	float       bat        = -1.0;
 
 public:
 
-	LYWSD03MMCData( BLEAddress *address, const char *alias = nullptr )
+	LYWSD03MMCData( BLEAddress *address, const char *alias = nullptr, const uint8_t *key = nullptr )
 	{
 		this->address = address;
 		this->alias = alias;
+		this->key = key;
 	}
 
 	/**
@@ -39,6 +43,15 @@ public:
 	 * @param[in] serviceData Service data from ADV packet
 	 */
 	void onAdvData( BLEAddress *address, std::string &serviceData );
+
+	/**
+	 * @brief Decrypts encrypted ADV service data
+	 * @param[in] serviceData Received encrypted service data
+	 * @param[in] key Key to decrypt data
+	 * @param[out] decryptedData Decrypted data (if success)
+	 * @return Returns true on success or false on failure
+	 */
+	bool decryptServiceData( std::string &serviceData, const uint8_t *key, uint8_t decryptedData[16] );
 
 	friend class LYWSD03MMC;
 };
@@ -78,8 +91,9 @@ public:
 	 * @brief Registers new LYWSD03MMC devices MAC address that we want to get data from
 	 * @param[in] address MAC address of device
 	 * @param[in] alias Our device alias
+	 * @param[in] key Key for decrypting ADV packets in passive mode
 	 */
-	void deviceRegister( BLEAddress *address, const char *alias = nullptr );
+	void deviceRegister( BLEAddress *address, const char *alias = nullptr, const uint8_t *key = nullptr );
 
 	/**
 	 * @brief Forces data refresh of device by alias
@@ -99,10 +113,11 @@ public:
 	 * @param[out] timestamp How many seconds ago was data refreshed
 	 * @param[out] temp Last temperature received
 	 * @param[out] hum Last humidity received
+	 * @param[out] bat Remaining battery capacity in %
 	 * @param[out] voltage Last battery voltage received
 	 * @return Returns true if device with entered alias was found (registered)
 	 */
-	bool getData( const char *alias, time_t *timestamp, float *temp = nullptr, float *hum = nullptr, float *voltage = nullptr );
+	bool getData( const char *alias, time_t *timestamp, float *temp = nullptr, float *hum = nullptr, float *bat = nullptr, float *voltage = nullptr );
 
 	/**
 	 * @brief Gets device data by MAC address
@@ -110,10 +125,11 @@ public:
 	 * @param[out] timestamp How many seconds ago was data refreshed
 	 * @param[out] temp Last temperature received
 	 * @param[out] hum Last humidity received
+	 * @param[out] bat Remaining battery capacity in %
 	 * @param[out] voltage Last battery voltage received
 	 * @return Returns true if device with entered MAC was found (registered)
 	 */
-	bool getData( BLEAddress &address, time_t *timestamp, float *temp = nullptr, float *hum = nullptr, float *voltage = nullptr );
+	bool getData( BLEAddress &address, time_t *timestamp, float *temp = nullptr, float *hum = nullptr, float *bat = nullptr, float *voltage = nullptr );
 
 
 private:
@@ -133,7 +149,7 @@ private:
 
 	time_t connStart;
 	time_t connTimeout = 15;
-	time_t maxAdvTimeout = 30;   //
+	time_t maxAdvTimeout = 30;
 	time_t refreshTime;
 
 	/**
