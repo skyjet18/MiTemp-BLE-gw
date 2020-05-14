@@ -7,7 +7,10 @@ ESP32 code for reading data from Xiaomi MiTemp LYWSDCGQ and LYWSD03MMC sensors. 
 - LYWSD03MMC - small square one with LCD display with great price / performance ratio
 
 ## How code works
-Code consists of base BleAdvListener class that handle all needed for listening and extracting service data from BLE devices. On the top of that are classes for each sensor. Data from LYWSDCGQ sensor are extracted directly from ADV packets. Data from LYWSD03MMC sensor are received by doing BLE connection and requesting notification from sensor. All is prepared for very simple usage. Example code that reads data from both types of sensors at the same time and exporting it using simple HTTP api is located in [mitemp_ble_gw_esp32.cpp](/mitemp_ble_gw_esp32.cpp) file. After changing file extension it should be possible to compile it also in Arduino Studio (original code was developed in Sloeber IDE).
+Code consists of base BleAdvListener class that handle all needed for listening and extracting service data from BLE devices. On the top of that are classes for each sensor. Data from LYWSDCGQ sensor are extracted directly from ADV packets. Data from LYWSD03MMC sensor can be received by doing BLE connection and requesting notification from sensor or passivly by extracting data from ADV packets (like for LYWSDCGQ). For that to work you need to know your encryption key, because data in ADV packets are encrypted. All is prepared for very simple usage. Example code that reads data from both types of sensors at the same time and exporting it using simple HTTP api is located in [mitemp_ble_gw_esp32.cpp](/mitemp_ble_gw_esp32.cpp) file. After changing file extension it should be possible to compile it also in Arduino Studio (original code was developed in Sloeber IDE).
+
+## Encryption keys for LYWSD03MMC
+How to get encryption key is described in [Home assistant component readme](https://github.com/custom-components/sensor.mitemp_bt/blob/master/faq.md#my-sensors-ble-advertisements-are-encrypted-how-can-i-get-the-key)
 
 ## Note to arduino-esp32 1.0.4 SDK
 This version doesn't support multiple service data in included BLE library. You need to patch it using included [multiple_services.patch](/multiple_services.patch) file.
