@@ -13,16 +13,6 @@ LYWSDCGQ lywsdcgq;
 
 /* ************************************************************************** */
 /**
- * @brief Dumps data from one sensor to serial output (used for debugging)
- */
-void LYWSDCGQData::dumpToSerial()
-{
-	SERIAL_PRINTF("%s: Temp: %.1f C Hum: %.1f%% Bat: %.0f\n",
-			alias, temp, hum, bat );
-}
-
-/* ************************************************************************** */
-/**
  * @brief Method called when ADV packet is received
  * @param[in] address Address of advertised device
  * @param[in] serviceData Service data from ADV packet
@@ -60,9 +50,6 @@ void LYWSDCGQData::onAdvData( BLEAddress *address, std::string &serviceData )
 		{
 			temp = ((tempData[4] << 8) | tempData[3]) / 10.0;
 			timestamp = time( NULL );
-
-			SERIAL_PRINTF("TEMPERATURE_EVENT: %.1f\n", temp );
-			dumpToSerial();
 		}
 		break;
 
@@ -70,17 +57,12 @@ void LYWSDCGQData::onAdvData( BLEAddress *address, std::string &serviceData )
 		{
 			hum = ((tempData[4] << 8) | tempData[3]) / 10.0;
 			timestamp = time( NULL );
-
-			SERIAL_PRINTF("HUMIDITY_EVENT: %.1f\n", hum );
-			dumpToSerial();
 		}
 		break;
 
 		case 0x0A:
 		{
 			bat = (float) tempData[3];
-
-			SERIAL_PRINTF("BATTERY_EVENT: %.0f\n", bat );
 		}
 		break;
 
@@ -89,11 +71,6 @@ void LYWSDCGQData::onAdvData( BLEAddress *address, std::string &serviceData )
 			temp = ((tempData[4] << 8) | tempData[3]) / 10.0;
 			hum = ((tempData[6] << 8) | tempData[5]) / 10.0;
 			timestamp = time( NULL );
-
-			SERIAL_PRINTF("TEMPERATURE_EVENT 2: %.1f\n", temp );
-			SERIAL_PRINTF("HUMIDITY_EVENT 2: %.1f\n", hum );
-
-			dumpToSerial();
 		}
 		break;
 	}

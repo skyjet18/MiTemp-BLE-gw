@@ -40,11 +40,6 @@ public:
 	 */
 	void onAdvData( BLEAddress *address, std::string &serviceData );
 
-	/**
-	 * @brief Dumps data from one sensor to serial output (used for debugging)
-	 */
-	void dumpToSerial();
-
 	friend class LYWSDCGQ;
 };
 
