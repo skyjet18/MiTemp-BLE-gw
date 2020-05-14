@@ -14,17 +14,18 @@ struct MyDevices
 {
 	BLEAddress     address;
 	const char   *alias;
-	bool           needConnect;
+	bool           isLYWSD03MMC;
+	const uint8_t  key[16];
 } MyDevices[] = {
-	{ BLEAddress("58:2D:34:XX:XX:XX"), "Round", false },
-	{ BLEAddress("A4:C1:38:XX:XX:XX"), "Square", true },
+	{ BLEAddress("58:2D:34:XX:XX:XX"), "Round", false, { 0x00 } },
+	{ BLEAddress("A4:C1:38:XX:XX:XX"), "Square", true, { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10 } },
 };
 
 #define MY_DEVICES_COUNT (int)(sizeof( MyDevices ) / sizeof( struct MyDevices ))
 
 /* ************************************************************************** */
 
-BLEClient* pClient = nullptr;
+const int lywsd03mmcDataRefresh = 180; // changing this value to 0 will enable passive only mode for LYWSD03MMC (in case you have decryption key for it)
 
 /* ************************************************************************** */
 
@@ -40,27 +41,25 @@ WebServer        web_server(80);
 String handle_temp( void )
 {
 	String response = "";
+	time_t  now = time( NULL );
+	struct SensorValues values;
 
 	if( web_server.args() == 0 )
 	{
-		time_t   timestamp;
-		float   temp;
-		float   hum;
-		float   bat;
 
 		for( int i = 0; i < MY_DEVICES_COUNT; i++ )
 		{
-			if( MyDevices[i].needConnect )
+			if( MyDevices[i].isLYWSD03MMC )
 			{
-				lywsd03mmc.getData( MyDevices[i].address, &timestamp, &temp, &hum, &bat );
+				lywsd03mmc.getData( MyDevices[i].address, &values );
 			}
 			else
 			{
-				lywsdcgq.getData( MyDevices[i].address, &timestamp, &temp, &hum, &bat );
+				lywsdcgq.getData( MyDevices[i].address, &values );
 			}
 
 			char buff[100];
-			snprintf( buff, 100, "%s, %ld, %.1f, %.1f, %.3f\n", MyDevices[i].alias, timestamp, temp, hum, bat );
+			snprintf( buff, 100, "%s, %ld, %.1f, %.1f, %.3f\n", MyDevices[i].alias, now - values.tempTimestamp, values.temp, values.humidity, values.bat );
 			response += buff;
 		}
 	}
@@ -70,26 +69,82 @@ String handle_temp( void )
 	}
 	else
 	{
-		time_t   timestamp;
-		float   temp;
-		float   hum;
-		float   bat;
-
-		if( lywsdcgq.getData( web_server.arg( "alias" ).c_str(), &timestamp, &temp, &hum, &bat ) == false &&
-			lywsd03mmc.getData( web_server.arg( "alias" ).c_str(), &timestamp, &temp, &hum, &bat ) == false )
+		if( lywsdcgq.getData( web_server.arg( "alias" ).c_str(), &values ) == false &&
+			lywsd03mmc.getData( web_server.arg( "alias" ).c_str(), &values ) == false )
 		{
 			response = ", , , ";
 		}
 		else
 		{
 			char buff[100];
-			snprintf( buff, 100, "%ld, %.1f, %.1f, %.3f\n", timestamp, temp, hum, bat );
+			snprintf( buff, 100, "%ld, %.1f, %.1f, %.3f\n", now - values.tempTimestamp, values.temp, values.humidity, values.bat );
 			response = buff;
 		}
 	}
 
 	return response;
 }
+
+/* ************************************************************************** */
+
+class LYWSD03MMCChangeCbk : public SensorDataChangeCbk
+{
+public:
+	void onData( BLEAddress *address, const char *alias, bool tempNew, bool humidityNew, bool batNew )
+	{
+		struct SensorValues values;
+
+		lywsd03mmc.getData( *address, &values );
+
+		if( tempNew )
+		{
+			SERIAL_PRINTF( "New sensor data: alias=%s, sensor=LYWSD03MMC, temp=%.1f\n",
+					alias, values.temp );
+		}
+
+		if( humidityNew )
+		{
+			SERIAL_PRINTF( "New sensor data: alias=%s, sensor=LYWSD03MMC, humidity=%.1f\n",
+					alias, values.humidity );
+		}
+
+		if( batNew )
+		{
+			SERIAL_PRINTF( "New sensor data: alias=%s, sensor=LYWSD03MMC, bat=%.1f\n",
+					alias, values.bat );
+		}
+	}
+};
+
+class LYWSDCGQChangeCbk : public SensorDataChangeCbk
+{
+public:
+	void onData( BLEAddress *address, const char *alias, bool tempNew, bool humidityNew, bool batNew )
+	{
+		struct SensorValues values;
+		char buff[160];
+
+		lywsdcgq.getData( *address, &values );
+
+		if( tempNew )
+		{
+			SERIAL_PRINTF( "New sensor data: alias=%s, sensor=LYWSDCGQ, temp=%.1f\n",
+					alias, values.temp );
+		}
+
+		if( humidityNew )
+		{
+			SERIAL_PRINTF( "New sensor data: alias=%s, sensor=LYWSDCGQ, humidity=%.1f\n",
+					alias, values.humidity );
+		}
+
+		if( batNew )
+		{
+			SERIAL_PRINTF( "New sensor data: alias=%s, sensor=LYWSDCGQ, bat=%.1f\n",
+					alias, values.bat );
+		}
+	}
+};
 
 /* ************************************************************************** */
 
@@ -140,19 +195,23 @@ void setup()
 	BLEDevice::init("");
 
 	bleAdvListener.init();
-	lywsd03mmc.init( 180 );
+	lywsd03mmc.init( lywsd03mmcDataRefresh );
+    lywsdcgq.init( 60 );
 
 	for( int i = 0; i < MY_DEVICES_COUNT; i++ )
 	{
-		if( MyDevices[i].needConnect )
+		if( MyDevices[i].isLYWSD03MMC )
 		{
-			lywsd03mmc.deviceRegister( &MyDevices[i].address, MyDevices[i].alias );
+			lywsd03mmc.deviceRegister( &MyDevices[i].address, MyDevices[i].alias, MyDevices[i].key );
 		}
 		else
 		{
 			lywsdcgq.deviceRegister( &MyDevices[i].address, MyDevices[i].alias );
 		}
 	}
+
+	lywsd03mmc.cbkRegister( new LYWSD03MMCChangeCbk() );
+	lywsdcgq.cbkRegister( new LYWSDCGQChangeCbk() );
 
 	SERIAL_PRINTLN( "Setup completed" );
 }
