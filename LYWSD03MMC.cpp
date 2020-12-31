@@ -120,8 +120,46 @@ void LYWSD03MMCData::onAdvData( BLEAddress *address, uint16_t serviceDataUUID, s
 
 	advTimestamp = time( NULL );
 
-	if( serviceDataUUID == 0xFE95 )
+	if( serviceDataUUID == 0x181A )
 	{
+		SERIAL_PRINTF("Detected data from custom firmware\n" );
+
+		// unencrypted data from custom firmware
+		uint8_t tempData[6];
+		serviceData.copy( (char*) tempData, 6, 6 );
+
+		values.temp = ((tempData[0] << 8) | tempData[1]) / 10.0;
+		values.tempTimestamp = advTimestamp;
+
+		values.humidity = tempData[2];
+		values.humidityTimestamp = advTimestamp;
+
+		values.bat = (float) tempData[3];
+
+		values.voltage = ((tempData[4] << 8) | tempData[5]) / 1000.0;
+		values.batTimestamp = advTimestamp;
+
+		if( advTimestamp > nextTempNotify )
+		{
+			tempNew = true;
+			nextTempNotify = advTimestamp + cbkWaitTime;
+		}
+		if( advTimestamp > nextHumidityNotify )
+		{
+			humidityNew = true;
+			nextHumidityNotify = advTimestamp + cbkWaitTime;
+		}
+
+		if( advTimestamp > nextBatNotify )
+		{
+			batNew = true;
+			nextBatNotify = advTimestamp + cbkWaitTime;
+		}
+	}
+	else if( serviceDataUUID == 0xFE95 )
+	{
+		SERIAL_PRINTF("Detected data from regular firmware\n" );
+
 		uint8_t serviceDataPerfix[4];
 		serviceData.copy( (char*) serviceDataPerfix, 4, 0 );
 
