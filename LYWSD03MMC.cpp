@@ -97,78 +97,99 @@ bool LYWSD03MMCData::decryptServiceData( std::string &serviceData, const uint8_t
 /**
  * @brief Method called when ADV packet is received
  * @param[in] address Address of advertised device
+ * @param[in] serviceDataUUID UUID of advertised service data
  * @param[in] serviceData Service data from ADV packet
  */
-void LYWSD03MMCData::onAdvData( BLEAddress *address, std::string &serviceData )
+void LYWSD03MMCData::onAdvData( BLEAddress *address, uint16_t serviceDataUUID, std::string &serviceData )
 {
 	if( this->address->equals( *address ) == false )
 	{
 		return;
 	}
 
-	advTimestamp = time( NULL );
-
-	/* check for encrypted data prefix */
-	if( serviceData.c_str()[0] != 0x58 )
-	{
-		return;
-	}
-
-	uint8_t tempData[16];
-
-	if( decryptServiceData( serviceData, this->key, tempData ) == false )
-	{
-		SERIAL_PRINTF("Failed to decrypt service data from device %s\n", address->toString().c_str() );
-		return;
-	}
+	SERIAL_PRINTF("Found device: %s alias: %s\n", address->toString().c_str(), alias );
 
 	bool tempNew = false;
 	bool humidityNew = false;
 	bool batNew = false;
 
-	switch( tempData[0] )
+	advTimestamp = time( NULL );
+
+	if( serviceDataUUID == 0xFE95 )
 	{
-		case 0x04:
+		uint8_t serviceDataPerfix[4];
+		serviceData.copy( (char*) serviceDataPerfix, 4, 0 );
+
+		if( (serviceDataPerfix[0] != 0x58 || serviceDataPerfix[1] != 0x58) )
 		{
-			if( advTimestamp > nextTempNotify )
-			{
-				tempNew = true;
-				nextTempNotify = advTimestamp + cbkWaitTime;
-			}
-
-			values.temp = ((tempData[4] << 8) | tempData[3]) / 10.0;
-			values.tempTimestamp = advTimestamp;
+			SERIAL_PRINTF("Frame control data 0x%02X 0x%02X doesn't match expected values\n", serviceDataPerfix[0], serviceDataPerfix[1] );
+			return;
 		}
-		break;
 
-		case 0x06:
+		if( serviceDataPerfix[2] != 0x5B || serviceDataPerfix[3] != 0x05 )
 		{
-			if( advTimestamp > nextHumidityNotify )
-			{
-				humidityNew = true;
-				nextHumidityNotify = advTimestamp + cbkWaitTime;
-			}
-
-			values.humidity = ((tempData[4] << 8) | tempData[3]) / 10.0;
-			values.humidityTimestamp = advTimestamp;
+			SERIAL_PRINTF("Device type 0x%02X 0x%02Xxdoesn't match expectet value for LYWSD03MMC sensor\n", serviceDataPerfix[2], serviceDataPerfix[3] );
+	//		return; // Frame control is ok, so maybe other type of sensor with the same data format
 		}
-		break;
 
-		case 0x0A:
+		uint8_t tempData[16];
+
+		if( decryptServiceData( serviceData, this->key, tempData ) == false )
 		{
-			if( advTimestamp > nextBatNotify )
-			{
-				batNew = true;
-				nextBatNotify = advTimestamp + cbkWaitTime;
-			}
-
-			values.bat = (float) tempData[3];
-
-			// emulate voltage -> 3.1V = 100%, 2.1V = 0%
-			values.voltage = 2.1 + (values.bat / 100.0);
-			values.batTimestamp = advTimestamp;
+			SERIAL_PRINTF("Failed to decrypt service data from device %s\n", address->toString().c_str() );
+			return;
 		}
-		break;
+
+
+		switch( tempData[0] )
+		{
+			case 0x04:
+			{
+				if( advTimestamp > nextTempNotify )
+				{
+					tempNew = true;
+					nextTempNotify = advTimestamp + cbkWaitTime;
+				}
+
+				values.temp = ((tempData[4] << 8) | tempData[3]) / 10.0;
+				values.tempTimestamp = advTimestamp;
+			}
+			break;
+
+			case 0x06:
+			{
+				if( advTimestamp > nextHumidityNotify )
+				{
+					humidityNew = true;
+					nextHumidityNotify = advTimestamp + cbkWaitTime;
+				}
+
+				values.humidity = ((tempData[4] << 8) | tempData[3]) / 10.0;
+				values.humidityTimestamp = advTimestamp;
+			}
+			break;
+
+			case 0x0A:
+			{
+				if( advTimestamp > nextBatNotify )
+				{
+					batNew = true;
+					nextBatNotify = advTimestamp + cbkWaitTime;
+				}
+
+				values.bat = (float) tempData[3];
+
+				// emulate voltage -> 3.1V = 100%, 2.1V = 0%
+				values.voltage = 2.1 + (values.bat / 100.0);
+				values.batTimestamp = advTimestamp;
+			}
+			break;
+		}
+	}
+	else
+	{
+		SERIAL_PRINTF("Received service data with not interested UUID %u\n", serviceDataUUID );
+		return;
 	}
 
 	if( tempNew || humidityNew || batNew )

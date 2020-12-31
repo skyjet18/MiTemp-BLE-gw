@@ -34,8 +34,12 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks
     		for (int i = 0; i < count; i++)
     		{
     			std::string serviceData = advertisedDevice.getServiceData(i);
+    			esp_bt_uuid_t *uuid = advertisedDevice.getServiceDataUUID(i).getNative();
 
-    			(*it)->onAdvData( &address, serviceData );
+    			if( uuid->len == ESP_UUID_LEN_16 )
+    			{
+    				(*it)->onAdvData( &address, (uuid->uuid).uuid16, serviceData );
+    			}
     		}
     	}
     }

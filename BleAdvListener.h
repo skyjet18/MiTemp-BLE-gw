@@ -16,9 +16,10 @@ public:
 	/**
 	 * @brief Method called when ADV packet is received
 	 * @param[in] address Address of advertised device
+	 * @param[in] serviceDataUUID UUID of advertised service data
 	 * @param[in] serviceData Service data from ADV packet
 	 */
-	virtual void onAdvData( BLEAddress *address, std::string &serviceData ) = 0;
+	virtual void onAdvData( BLEAddress *address, uint16_t serviceDataUUID, std::string &serviceData ) = 0;
 };
 
 /* ************************************************************************** */

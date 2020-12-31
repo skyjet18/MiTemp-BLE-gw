@@ -15,17 +15,17 @@ LYWSDCGQ lywsdcgq;
 /**
  * @brief Method called when ADV packet is received
  * @param[in] address Address of advertised device
+ * @param[in] serviceDataUUID UUID of advertised service data
  * @param[in] serviceData Service data from ADV packet
  */
-void LYWSDCGQData::onAdvData( BLEAddress *address, std::string &serviceData )
+void LYWSDCGQData::onAdvData( BLEAddress *address, uint16_t serviceDataUUID, std::string &serviceData )
 {
 	if( this->address->equals( *address ) == false )
 	{
 		return;
 	}
 
-	SERIAL_PRINTF("Found device: %s alias: %s\n",
-			address().toString().c_str(), alias );
+	SERIAL_PRINTF("Found device: %s alias: %s\n", address->toString().c_str(), alias );
 
 	uint8_t tempData[32];
 	size_t  tempDataLen = 0;
@@ -33,6 +33,12 @@ void LYWSDCGQData::onAdvData( BLEAddress *address, std::string &serviceData )
 	size_t sdLength;
 
 	advTimestamp = time( NULL );
+
+	if( serviceDataUUID != 0xFE95 )
+	{
+		SERIAL_PRINTF("Received service data with not interested UUID %u\n", serviceDataUUID );
+		return;
+	}
 
 	if( (sdLength = serviceData.length()) > 11 )
 	{
@@ -43,6 +49,21 @@ void LYWSDCGQData::onAdvData( BLEAddress *address, std::string &serviceData )
 	if( !tempDataLen )
 	{
 		SERIAL_PRINTF("We don't have enough service data\n");
+		return;
+	}
+
+	uint8_t serviceDataPerfix[4];
+	serviceData.copy( (char*) serviceDataPerfix, 4, 0 );
+
+	if( serviceDataPerfix[0] != 0x50 || serviceDataPerfix[1] != 0x20 )
+	{
+		SERIAL_PRINTF("Frame control data 0x%02X 0x%02X doesn't match expected values\n", serviceDataPerfix[0], serviceDataPerfix[1] );
+		return;
+	}
+
+	if( serviceDataPerfix[2] != 0xAA || serviceDataPerfix[3] != 0x01 )
+	{
+		SERIAL_PRINTF("Device type 0x%02X 0x%02X doesn't match expectet value for LYWSDCGQ sensor\n", serviceDataPerfix[2], serviceDataPerfix[3] );
 		return;
 	}
 
