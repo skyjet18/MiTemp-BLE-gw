@@ -42,6 +42,16 @@ bool LYWSD03MMCData::decryptServiceData( std::string &serviceData, const uint8_t
 {
 	const uint8_t *v = (const uint8_t *) serviceData.c_str();
 
+	if( !(v[0] & 0x08) )
+	{
+		SERIAL_PRINTF("Payload of size %u is not encrypted\n", serviceData.length() );
+
+		uint8_t len = (uint8_t) serviceData.length();
+		serviceData.copy( (char *) decryptedData, (len - 11) > 16 ? 16 : (len - 11), 11 );
+
+		return true;
+	}
+
 	if( key == nullptr )
 	{
 		return false;
@@ -49,12 +59,7 @@ bool LYWSD03MMCData::decryptServiceData( std::string &serviceData, const uint8_t
 
 	if( serviceData.length() < 22 && serviceData.length() > 23 )
 	{
-		SERIAL_PRINTF("Payload size %ld is not supported for decryption\n", serviceData.length() );
-		return false;
-	}
-	else if( !(v[0] & 0x08) )
-	{
-		SERIAL_PRINTF("Payload of size %ld is not encrypted\n", serviceData.length() );
+		SERIAL_PRINTF("Payload size %u is not supported for decryption\n", serviceData.length() );
 		return false;
 	}
 
@@ -120,7 +125,9 @@ void LYWSD03MMCData::onAdvData( BLEAddress *address, uint16_t serviceDataUUID, s
 		uint8_t serviceDataPerfix[4];
 		serviceData.copy( (char*) serviceDataPerfix, 4, 0 );
 
-		if( (serviceDataPerfix[0] != 0x58 || serviceDataPerfix[1] != 0x58) )
+		/* check for data prefix (0x58 == encrypted, 0x50 == not encrypted) */
+		if( (serviceDataPerfix[0] != 0x50 || serviceDataPerfix[1] != 0x30) &&
+				(serviceDataPerfix[0] != 0x58 || serviceDataPerfix[1] != 0x58) )
 		{
 			SERIAL_PRINTF("Frame control data 0x%02X 0x%02X doesn't match expected values\n", serviceDataPerfix[0], serviceDataPerfix[1] );
 			return;
@@ -184,6 +191,29 @@ void LYWSD03MMCData::onAdvData( BLEAddress *address, uint16_t serviceDataUUID, s
 				values.batTimestamp = advTimestamp;
 			}
 			break;
+
+			case 0x0D:
+			{
+				if( advTimestamp > nextTempNotify )
+				{
+					tempNew = true;
+					nextTempNotify = advTimestamp + cbkWaitTime;
+				}
+
+				if( advTimestamp > nextHumidityNotify )
+				{
+					humidityNew = true;
+					nextHumidityNotify = advTimestamp + cbkWaitTime;
+				}
+
+				values.temp = ((tempData[4] << 8) | tempData[3]) / 10.0;
+				values.humidity = ((tempData[6] << 8) | tempData[5]) / 10.0;
+
+				values.humidityTimestamp = advTimestamp;
+				values.tempTimestamp = advTimestamp;
+			}
+			break;
+
 		}
 	}
 	else
