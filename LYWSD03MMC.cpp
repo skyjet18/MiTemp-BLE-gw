@@ -120,24 +120,65 @@ void LYWSD03MMCData::onAdvData( BLEAddress *address, uint16_t serviceDataUUID, s
 
 	advTimestamp = time( NULL );
 
-	if( serviceDataUUID == 0x181A )
-	{
-		SERIAL_PRINTF("Detected data from custom firmware\n" );
+	// there are currently 2 custom firmwares for LYWSD03MMC:
+	// - from atc1441 - original one
+	// - from pvvx - fork of atc1441 with many enhancemets
+	// they both use 0x181A UUID for advertising, but format of data is not the same
 
-		// unencrypted data from custom firmware
+	if( serviceDataUUID == 0x181A && serviceData.size() == 13 )
+	{
+		SERIAL_PRINTF("Detected data from atc1441 custom firmware\n" );
+
+		// unencrypted data from atc1441 custom firmware
 		uint8_t tempData[6];
 		serviceData.copy( (char*) tempData, 6, 6 );
 
 		values.temp = ((tempData[0] << 8) | tempData[1]) / 10.0;
 		values.tempTimestamp = advTimestamp;
 
-		values.humidity = tempData[2];
+		values.humidity = (float) tempData[2];
 		values.humidityTimestamp = advTimestamp;
 
 		values.bat = (float) tempData[3];
 
 		values.voltage = ((tempData[4] << 8) | tempData[5]) / 1000.0;
 		values.batTimestamp = advTimestamp;
+
+		if( advTimestamp > nextTempNotify )
+		{
+			tempNew = true;
+			nextTempNotify = advTimestamp + cbkWaitTime;
+		}
+		if( advTimestamp > nextHumidityNotify )
+		{
+			humidityNew = true;
+			nextHumidityNotify = advTimestamp + cbkWaitTime;
+		}
+
+		if( advTimestamp > nextBatNotify )
+		{
+			batNew = true;
+			nextBatNotify = advTimestamp + cbkWaitTime;
+		}
+	}
+	else if( serviceDataUUID == 0x181A && serviceData.size() >= 15 )
+	{
+		SERIAL_PRINTF("Detected data from pvvx custom firmware\n" );
+
+		// unencrypted data from pvvx custom firmware
+		uint8_t tempData[7];
+		serviceData.copy( (char*) tempData, 7, 6 );
+
+		values.temp = ((tempData[1] << 8) | tempData[0]) / 100.0;
+		values.tempTimestamp = advTimestamp;
+
+		values.humidity = (float) ((tempData[3] << 8) | tempData[2]) / 100.0;
+		values.humidityTimestamp = advTimestamp;
+
+		values.voltage = ((tempData[5] << 8) | tempData[4]) / 1000.0;
+		values.batTimestamp = advTimestamp;
+
+		values.bat = (float) tempData[6];
 
 		if( advTimestamp > nextTempNotify )
 		{
