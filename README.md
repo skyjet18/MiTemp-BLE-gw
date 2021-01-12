@@ -14,6 +14,7 @@ How to get encryption key is described in [Home assistant component readme](http
 
 ## Custom firmware for LYWSD03MMC
 There's a great project [ATC_MiThermometer](https://github.com/atc1441/ATC_MiThermometer) where you can find custom firmware for LYWSD03MMC sensor. Installing this firmware will give you great features, like unencrypted data in ADV packets (you don't need to pair device anymore after batery replacement), display of battery status right on display, custom name with mac address in it (great if you have many sensors) and so on. Installing firmware is really simple, so I definitely recommend it.
+The original project was also forked [HERE by pvvx](https://github.com/pvvx/ATC_MiThermometer). It contains many modifications and introduced also another custom format of ADV packets. Data format for all these firmwares is supported.
 
 ## Note to arduino-esp32 1.0.4 SDK
 This version doesn't support multiple service data in included BLE library. You need to patch it using included [multiple_services.patch](/multiple_services.patch) file.
